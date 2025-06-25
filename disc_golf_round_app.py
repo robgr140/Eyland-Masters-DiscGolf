@@ -24,15 +24,39 @@ page = st.sidebar.selectbox("view", ["upload strokes", "initialize round", "reco
 # Upload strokes
 if page == "upload strokes":
     st.header("upload udisc strokes")
-    uploaded_file = st.file_uploader("upload csv", type="csv")
+    uploaded_file = st.file_uploader("upload udisc csv", type="csv")
+    
     if uploaded_file:
-        new_data = pd.read_csv(uploaded_file)
-        if all(col in new_data.columns for col in ["player", "hole", "score", "round_id"]):
-            strokes_df = pd.concat([strokes_df, new_data], ignore_index=True)
-            strokes_df.to_csv(STROKES_FILE, index=False)
-            st.success("uploaded and saved")
-        else:
-            st.error("csv must include player, hole, score, round_id")
+        try:
+            df = pd.read_csv(uploaded_file, sep="\t")
+            expected_cols = ["PlayerName", "CourseName", "StartDate"] + [f"Hole{i}" for i in range(1, 19)]
+            
+            if not all(col in df.columns for col in expected_cols):
+                st.error("csv missing required udisc columns")
+            else:
+                long_format_rows = []
+                for _, row in df.iterrows():
+                    player = row["PlayerName"]
+                    course = row["CourseName"]
+                    date = pd.to_datetime(row["StartDate"]).date().isoformat()
+                    round_id = f"{course}-{date}".replace(" ", "")
+                    for i in range(1, 19):
+                        score = row[f"Hole{i}"]
+                        if pd.notna(score):
+                            long_format_rows.append({
+                                "player": player,
+                                "hole": i,
+                                "score": int(score),
+                                "round_id": round_id
+                            })
+
+                new_data = pd.DataFrame(long_format_rows)
+                strokes_df = pd.concat([strokes_df, new_data], ignore_index=True)
+                strokes_df.to_csv(STROKES_FILE, index=False)
+                st.success(f"{len(new_data)} strokes imported")
+        except Exception as e:
+            st.error(f"upload failed: {e}")
+
 
 # Initialize round
 elif page == "initialize round":
