@@ -1,52 +1,101 @@
-from pathlib import Path
-import pandas as pd
 import streamlit as st
+import pandas as pd
 import os
 
-# Set up paths
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
-STROKES_FILE = DATA_DIR / "strokes.csv"
+# Constants for file storage
+DATA_DIR = "data"
+os.makedirs(DATA_DIR, exist_ok=True)
 
-# Page config
-st.set_page_config(page_title="Upload Strokes", layout="centered")
-st.title("eyland masters disc golf")
-st.header("upload strokes from udisc")
-st.subheader("upload udisc csv")
+STROKES_FILE = os.path.join(DATA_DIR, "strokes.csv")
+ROUNDS_FILE = os.path.join(DATA_DIR, "rounds.csv")
+SKINS_FILE = os.path.join(DATA_DIR, "skins.csv")
 
-# File uploader
-uploaded_file = st.file_uploader("Choose a UDisc CSV file", type="csv")
+# Load or create empty DataFrames
+def load_csv(path, columns):
+    return pd.read_csv(path) if os.path.exists(path) else pd.DataFrame(columns=columns)
 
-# Show content if a file is uploaded
-if uploaded_file is not None:
-    try:
-        # Read file
-        df = pd.read_csv(uploaded_file)
+strokes_df = load_csv(STROKES_FILE, ["player", "hole", "score", "round_id"])
+rounds_df = load_csv(ROUNDS_FILE, ["round_id", "day", "round_number", "course", "challenger", "hunter"])
+skins_df = load_csv(SKINS_FILE, ["round_id", "hole", "winner"])
 
-        # Basic validation (you can improve this)
-        if "Player" not in df.columns or "Total" not in df.columns:
-            st.error("This doesn't appear to be a valid UDisc export.")
+# Sidebar nav
+page = st.sidebar.selectbox("view", ["upload strokes", "initialize round", "record skins", "dashboard"])
+
+# Upload strokes
+if page == "upload strokes":
+    st.header("upload udisc strokes")
+    uploaded_file = st.file_uploader("upload csv", type="csv")
+    if uploaded_file:
+        new_data = pd.read_csv(uploaded_file)
+        if all(col in new_data.columns for col in ["player", "hole", "score", "round_id"]):
+            strokes_df = pd.concat([strokes_df, new_data], ignore_index=True)
+            strokes_df.to_csv(STROKES_FILE, index=False)
+            st.success("uploaded and saved")
         else:
-            st.success("File uploaded and parsed successfully!")
+            st.error("csv must include player, hole, score, round_id")
 
-            # Show preview
-            st.dataframe(df.head())
+# Initialize round
+elif page == "initialize round":
+    st.header("initialize round")
+    with st.form("round_form"):
+        round_id = st.text_input("round id")
+        day = st.text_input("day")
+        round_number = st.number_input("round number", min_value=1)
+        course = st.text_input("course")
+        challenger = st.text_input("challenger")
+        hunter = st.text_input("hunter (optional)", value="")
+        submit = st.form_submit_button("save")
+        if submit:
+            new_row = pd.DataFrame([{
+                "round_id": round_id,
+                "day": day,
+                "round_number": round_number,
+                "course": course,
+                "challenger": challenger,
+                "hunter": hunter
+            }])
+            rounds_df = pd.concat([rounds_df, new_row], ignore_index=True)
+            rounds_df.to_csv(ROUNDS_FILE, index=False)
+            st.success("round saved")
 
-            # Save to strokes.csv
-            if STROKES_FILE.exists():
-                existing = pd.read_csv(STROKES_FILE)
-                combined = pd.concat([existing, df], ignore_index=True)
-                combined.to_csv(STROKES_FILE, index=False)
-                st.success("Data appended to existing strokes.csv.")
-            else:
-                df.to_csv(STROKES_FILE, index=False)
-                st.success("strokes.csv created and saved.")
-    except Exception as e:
-        st.error(f"Error reading file: {e}")
-else:
-    if STROKES_FILE.exists():
-        df_existing = pd.read_csv(STROKES_FILE)
-        st.info("Showing previously uploaded stroke data:")
-        st.dataframe(df_existing.head())
+# Record skins
+elif page == "record skins":
+    st.header("record skins")
+    if rounds_df.empty:
+        st.warning("no rounds found")
     else:
-        st.info("No stroke data uploaded yet.")
+        with st.form("skin_form"):
+            round_id = st.selectbox("round id", rounds_df["round_id"].unique())
+            hole = st.number_input("hole", min_value=1, max_value=18)
+            winner = st.selectbox("winner", ["Lag A", "Lag B", "Challenger", "Hunter"])
+            submit_skin = st.form_submit_button("save")
+            if submit_skin:
+                new_row = pd.DataFrame([{
+                    "round_id": round_id,
+                    "hole": hole,
+                    "winner": winner
+                }])
+                skins_df = pd.concat([skins_df, new_row], ignore_index=True)
+                skins_df.to_csv(SKINS_FILE, index=False)
+                st.success("saved")
+
+# Dashboard
+elif page == "dashboard":
+    st.header("leaderboard")
+
+    if strokes_df.empty:
+        st.warning("no stroke data yet")
+    else:
+        bonus_counts = skins_df["winner"].value_counts().rename("bonus").reset_index()
+        bonus_counts.columns = ["player", "bonus"]
+
+        total_scores = strokes_df.groupby("player")["score"].sum().reset_index()
+        total_scores = total_scores.merge(bonus_counts, on="player", how="left")
+        total_scores["bonus"] = total_scores["bonus"].fillna(0)
+        total_scores["adjusted"] = total_scores["score"] - total_scores["bonus"]
+
+        st.subheader("score table")
+        st.dataframe(total_scores.sort_values("adjusted"))
+
+        st.subheader("chart")
+        st.bar_chart(total_scores.set_index("player")[["score", "adjusted"]])
