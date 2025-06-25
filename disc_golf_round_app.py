@@ -2,114 +2,107 @@ import streamlit as st
 import pandas as pd
 import uuid
 
-st.set_page_config(page_title="Disc Golf Tracker", layout="wide")
+st.set_page_config(page_title="disc golf app", layout="wide")
 
-st.title("Disc Golf Tracker")
-
-# Session state initialization
-if 'rounds' not in st.session_state:
+# --- SESSION STATE ---
+if "rounds" not in st.session_state:
     st.session_state.rounds = []
-if 'results' not in st.session_state:
+
+if "results" not in st.session_state:
     st.session_state.results = []
-if 'strokes' not in st.session_state:
-    st.session_state.strokes = pd.DataFrame()
 
-st.sidebar.header("Navigation")
-page = st.sidebar.radio("Go to", ["initialize round", "play round", "dashboard"])
+if "stroke_data" not in st.session_state:
+    st.session_state.stroke_data = pd.DataFrame()
 
-### PAGE 1: initialize round ###
-if page == "initialize round":
-    st.header("Initialize Round")
-    
-    with st.form("round_form"):
-        day = st.selectbox("Select day", ["Day 1", "Day 2", "Day 3", "Day 4"])
-        round_number = st.number_input("Round number", min_value=1, max_value=10, step=1)
-        course = st.text_input("Course")
-        challenger = st.text_input("Challenger")
-        hunter = st.text_input("Hunter (if any, optional)", value="")
+# --- ROUND INITIALIZATION ---
+st.title("eyland disc golf")
 
-        team_a = st.text_input("Team A (comma-separated)")
-        team_b = st.text_input("Team B (comma-separated)")
+tab1, tab2, tab3 = st.tabs(["initialize round", "play round", "dashboard"])
 
-        submitted = st.form_submit_button("Save round")
-
+with tab1:
+    st.subheader("initialize round")
+    with st.form("round_init_form"):
+        day = st.selectbox("day", ["day 1", "day 2", "day 3", "day 4"])
+        round_number = st.number_input("round number", min_value=1, max_value=5, step=1)
+        course = st.text_input("course name")
+        players = st.text_area("players (comma separated)")
+        include_challenger = st.checkbox("include challenger/hunter", value=True)
+        challenger = hunter = None
+        if include_challenger:
+            challenger = st.text_input("challenger name")
+            hunter = st.text_input("hunter name (optional)")
+        uploaded_file = st.file_uploader("upload udisc csv", type="csv")
+        submitted = st.form_submit_button("create round")
         if submitted:
-            round_id = f"D{day[-1]}R{round_number}"
+            round_id = f"{day.replace(' ', '')}R{round_number}"
+            player_list = [p.strip() for p in players.split(",") if p.strip()]
             st.session_state.rounds.append({
                 "round_id": round_id,
                 "day": day,
                 "round_number": round_number,
                 "course": course,
+                "players": player_list,
                 "challenger": challenger,
-                "hunter": hunter,
-                "team_a": [name.strip() for name in team_a.split(",")],
-                "team_b": [name.strip() for name in team_b.split(",")]
+                "hunter": hunter
             })
-            st.success(f"Round {round_id} saved.")
+            if uploaded_file:
+                try:
+                    stroke_df = pd.read_csv(uploaded_file)
+                    stroke_df["round_id"] = round_id
+                    st.session_state.stroke_data = pd.concat([st.session_state.stroke_data, stroke_df], ignore_index=True)
+                    st.success("stroke data uploaded")
+                except Exception as e:
+                    st.error(f"could not process csv: {e}")
+            st.success(f"round {round_id} created")
 
-    st.subheader("Current rounds")
-    if st.session_state.rounds:
-        st.dataframe(pd.DataFrame(st.session_state.rounds))
-
-    st.subheader("Upload UDisc stroke CSV")
-    uploaded_file = st.file_uploader("Upload UDisc strokes CSV", type="csv")
-    if uploaded_file:
-        st.session_state.strokes = pd.read_csv(uploaded_file)
-        st.success("Stroke data uploaded.")
-
-### PAGE 2: play round ###
-elif page == "play round":
-    st.header("Play Round: Record Skins Results")
-
+# --- PLAY ROUND / ENTER RESULTS ---
+with tab2:
+    st.subheader("play round")
     if not st.session_state.rounds:
-        st.warning("Please initialize a round first.")
+        st.info("initialize at least one round first")
     else:
-        selected_round = st.selectbox("Select round", [r["round_id"] for r in st.session_state.rounds])
-        round_info = next(r for r in st.session_state.rounds if r["round_id"] == selected_round)
-
-        with st.form("skins_form"):
-            st.markdown("### Enter skins results (per hole winner)")
-            num_holes = st.number_input("Number of holes", min_value=1, max_value=24, step=1)
-            results = []
-            for hole in range(1, num_holes + 1):
-                winner = st.selectbox(
-                    f"Hole {hole} winner",
-                    ["", "Team A", "Team B", "Challenger", "Hunter"],
-                    key=f"hole_{hole}_winner"
+        selected_round = st.selectbox("select round", [r["round_id"] for r in st.session_state.rounds])
+        current_round = next(r for r in st.session_state.rounds if r["round_id"] == selected_round)
+        holes = list(range(1, 19))
+        st.markdown("### enter hole results")
+        for hole in holes:
+            with st.expander(f"hole {hole}"):
+                winner = st.radio(
+                    f"who won hole {hole}?",
+                    options=["lag a", "lag b"] +
+                            ([current_round["challenger"]] if current_round["challenger"] else []) +
+                            ([current_round["hunter"]] if current_round["hunter"] else []),
+                    key=f"{selected_round}_hole_{hole}"
                 )
-                results.append({"round_id": selected_round, "hole": hole, "winner": winner})
+                if st.button(f"save result hole {hole}", key=f"save_{selected_round}_{hole}"):
+                    st.session_state.results.append({
+                        "round_id": selected_round,
+                        "hole": hole,
+                        "winner": winner
+                    })
+                    st.success(f"saved hole {hole} result")
 
-            save = st.form_submit_button("Save results")
-            if save:
-                st.session_state.results.extend(results)
-                st.success("Skins results saved.")
-
-        st.subheader("Current skins results")
-        st.dataframe(pd.DataFrame(st.session_state.results))
-
-### PAGE 3: dashboard ###
-elif page == "dashboard":
-    st.header("Dashboard")
-
-    if st.session_state.strokes.empty:
-        st.warning("No stroke data uploaded yet.")
+# --- DASHBOARD ---
+with tab3:
+    st.subheader("dashboard")
+    if st.session_state.stroke_data.empty:
+        st.warning("no stroke data uploaded")
     else:
-        bonus_df = pd.DataFrame(st.session_state.results)
+        st.dataframe(st.session_state.stroke_data)
 
-        # Count bonuses
-        bonus_df = bonus_df[bonus_df["winner"] != ""]
-        bonus_points = bonus_df.groupby("winner").size().reset_index(name="bonus")
-
-        # Combine with strokes
-        strokes_df = st.session_state.strokes.copy()
-        strokes_df.columns = [c.lower() for c in strokes_df.columns]
-
-        if "player" not in strokes_df.columns or "strokes" not in strokes_df.columns:
-            st.error("CSV must contain columns: 'player', 'strokes'")
+    results_df = pd.DataFrame(st.session_state.results)
+    if not results_df.empty:
+        bonus_df = results_df.copy()
+        bonus_df["bonus"] = bonus_df["winner"].apply(lambda x: -1.5 if x.lower() == "hunter" else (-1 if x.lower() not in ["lag a", "lag b"] else -0.5))
+        stroke_df = st.session_state.stroke_data
+        if "Name" in stroke_df.columns and "Total" in stroke_df.columns:
+            summary = stroke_df.groupby("Name")["Total"].sum().reset_index()
+            summary.columns = ["name", "strokes"]
+            bonus_summary = bonus_df.groupby("winner")["bonus"].sum().reset_index()
+            bonus_summary.columns = ["name", "bonus"]
+            merged = pd.merge(summary, bonus_summary, on="name", how="outer").fillna(0)
+            merged["adjusted_score"] = merged["strokes"] + merged["bonus"]
+            st.markdown("### current standings")
+            st.dataframe(merged.sort_values("adjusted_score"))
         else:
-            strokes_df = strokes_df.merge(bonus_points, how="left", left_on="player", right_on="winner")
-            strokes_df["bonus"] = strokes_df["bonus"].fillna(0)
-            strokes_df["adjusted_score"] = strokes_df["strokes"] - strokes_df["bonus"]
-
-            st.subheader("Leaderboard")
-            st.dataframe(strokes_df[["player", "strokes", "bonus", "adjusted_score"]].sort_values("adjusted_score"))
+            st.error("CSV must contain columns 'Name' and 'Total'")
