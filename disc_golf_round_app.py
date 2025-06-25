@@ -21,6 +21,8 @@ skins_df = load_csv(SKINS_FILE, ["round_id", "hole", "winner"])
 # Sidebar nav
 page = st.sidebar.selectbox("view", ["upload strokes", "initialize round", "record skins", "dashboard"])
 
+import csv
+
 # Upload strokes
 if page == "upload strokes":
     st.header("upload udisc strokes")
@@ -28,11 +30,24 @@ if page == "upload strokes":
     
     if uploaded_file:
         try:
-            df = pd.read_csv(uploaded_file, sep="\t")
-            expected_cols = ["PlayerName", "CourseName", "StartDate"] + [f"Hole{i}" for i in range(1, 19)]
+            # Try to auto-detect delimiter
+            sample = uploaded_file.read(2048).decode("utf-8")
+            uploaded_file.seek(0)
+            sniffer = csv.Sniffer()
+            dialect = sniffer.sniff(sample)
+            delimiter = dialect.delimiter
             
-            if not all(col in df.columns for col in expected_cols):
-                st.error("csv missing required udisc columns")
+            # Load CSV with detected delimiter
+            df = pd.read_csv(uploaded_file, delimiter=delimiter)
+            
+            # Show columns for debugging
+            st.write("detected columns:", list(df.columns))
+            
+            expected_cols = ["PlayerName", "CourseName", "StartDate"] + [f"Hole{i}" for i in range(1, 19)]
+            missing = [col for col in expected_cols if col not in df.columns]
+            
+            if missing:
+                st.error(f"missing required columns: {missing}")
             else:
                 long_format_rows = []
                 for _, row in df.iterrows():
